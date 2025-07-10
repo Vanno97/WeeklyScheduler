@@ -25,9 +25,19 @@ interface EventModalProps {
   editingEvent?: Appointment | null;
 }
 
-const formSchema = insertAppointmentSchema.extend({
+const formSchema = z.object({
+  title: z.string().min(1, "Title is required"),
+  description: z.string().optional(),
+  startTime: z.string().min(1, "Start time is required"),
+  endTime: z.string().min(1, "End time is required"),
   categoryId: z.number().optional(),
-});
+  email: z.string().email().optional().or(z.literal("")),
+}).transform((data) => ({
+  ...data,
+  startTime: new Date(data.startTime).toISOString(),
+  endTime: new Date(data.endTime).toISOString(),
+  email: data.email || undefined,
+}));
 
 export function EventModal({ 
   open, 
@@ -59,7 +69,7 @@ export function EventModal({
         // Edit mode
         const startTime = new Date(editingEvent.startTime);
         const endTime = new Date(editingEvent.endTime);
-        
+
         form.reset({
           title: editingEvent.title,
           description: editingEvent.description || "",
