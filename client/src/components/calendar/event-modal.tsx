@@ -116,6 +116,7 @@ export function EventModal({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      queryClient.refetchQueries({ queryKey: ["/api/appointments"] });
       toast({
         title: "Event created",
         description: "Your event has been successfully created.",
@@ -142,6 +143,7 @@ export function EventModal({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      queryClient.refetchQueries({ queryKey: ["/api/appointments"] });
       toast({
         title: "Event updated",
         description: "Your event has been successfully updated.",
@@ -167,6 +169,7 @@ export function EventModal({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      queryClient.refetchQueries({ queryKey: ["/api/appointments"] });
       toast({
         title: "Event deleted",
         description: "Your event has been successfully deleted.",
