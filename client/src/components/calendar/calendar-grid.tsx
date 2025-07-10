@@ -44,8 +44,25 @@ export function CalendarGrid({
   const getAppointmentForSlot = (day: Date, hour: number) => {
     return appointments.find(appointment => {
       const appointmentStart = new Date(appointment.startTime);
-      return isSameDay(appointmentStart, day) && appointmentStart.getHours() === hour;
+      const appointmentEnd = new Date(appointment.endTime);
+      return isSameDay(appointmentStart, day) && 
+             appointmentStart.getHours() <= hour && 
+             appointmentEnd.getHours() > hour;
     });
+  };
+
+  const getAppointmentHeight = (appointment: Appointment) => {
+    const start = new Date(appointment.startTime);
+    const end = new Date(appointment.endTime);
+    const startHour = start.getHours();
+    const endHour = end.getHours();
+    const duration = endHour - startHour;
+    return Math.max(1, duration);
+  };
+
+  const isAppointmentStart = (appointment: Appointment, hour: number) => {
+    const appointmentStart = new Date(appointment.startTime);
+    return appointmentStart.getHours() === hour;
   };
 
   const formatEventTime = (appointment: Appointment) => {
@@ -98,10 +115,13 @@ export function CalendarGrid({
                     }
                   }}
                 >
-                  {appointment && (
+                  {appointment && isAppointmentStart(appointment, slot.hour) && (
                     <div 
-                      className="absolute inset-1 text-white rounded-md p-2 text-xs font-medium shadow-sm"
-                      style={{ backgroundColor: getCategoryColor(appointment.categoryId) }}
+                      className="absolute inset-1 text-white rounded-md p-2 text-xs font-medium shadow-sm z-10"
+                      style={{ 
+                        backgroundColor: getCategoryColor(appointment.categoryId),
+                        height: `${getAppointmentHeight(appointment) * 60 - 8}px`
+                      }}
                     >
                       <div className="font-semibold truncate">{appointment.title}</div>
                       <div className="opacity-90 text-xs">
