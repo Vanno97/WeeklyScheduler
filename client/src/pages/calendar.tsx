@@ -22,10 +22,16 @@ export default function Calendar() {
   const weekEnd = getWeekEnd(currentDate);
 
   const { data: appointments = [] } = useQuery({
-    queryKey: ['/api/appointments', { 
-      startDate: weekStart.toISOString(), 
-      endDate: weekEnd.toISOString() 
-    }],
+    queryKey: ['/api/appointments', weekStart.toISOString(), weekEnd.toISOString()],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        startDate: weekStart.toISOString(),
+        endDate: weekEnd.toISOString()
+      });
+      const response = await fetch(`/api/appointments?${params}`);
+      if (!response.ok) throw new Error('Failed to fetch appointments');
+      return response.json();
+    },
   });
 
   const { data: categories = [] } = useQuery({
