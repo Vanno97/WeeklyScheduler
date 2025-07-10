@@ -96,7 +96,9 @@ export function CalendarGrid({
         {timeSlots.map((slot, slotIndex) => (
           <div 
             key={slot.hour} 
-            className="grid grid-cols-8 border-b border-gray-100 hover:bg-gray-50 transition-colors duration-200"
+            className={`grid grid-cols-8 border-b border-gray-100 hover:bg-gray-50 transition-colors duration-200 ${
+              slotIndex % 2 === 0 ? 'bg-white' : 'bg-gray-25'
+            }`}
           >
             <div className="p-3 text-xs text-gray-500 font-medium bg-gray-50 border-r border-gray-200">
               {slot.label}

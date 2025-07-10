@@ -64,6 +64,11 @@
   font-family: 'Inter', sans-serif;
 }
 
+/* Custom background color for alternating rows */
+.bg-gray-25 {
+  background-color: #fafafa;
+}
+
 .calendar-event {
   transition: all 0.2s ease-in-out;
 }
