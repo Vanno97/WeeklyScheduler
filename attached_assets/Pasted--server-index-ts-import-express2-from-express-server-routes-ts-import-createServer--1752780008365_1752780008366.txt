@@ -1,0 +1,507 @@
+// server/index.ts
+import express2 from "express";
+
+// server/routes.ts
+import { createServer } from "http";
+
+// server/storage.ts
+var MemStorage = class {
+  categories;
+  appointments;
+  currentCategoryId;
+  currentAppointmentId;
+  constructor() {
+    this.categories = /* @__PURE__ */ new Map();
+    this.appointments = /* @__PURE__ */ new Map();
+    this.currentCategoryId = 1;
+    this.currentAppointmentId = 1;
+    this.categories.set(1, { id: 1, name: "Work", color: "#1976D2" });
+    this.categories.set(2, { id: 2, name: "Personal", color: "#4CAF50" });
+    this.categories.set(3, { id: 3, name: "Health", color: "#FF9800" });
+    this.categories.set(4, { id: 4, name: "Social", color: "#9C27B0" });
+    this.currentCategoryId = 5;
+  }
+  async getCategories() {
+    return Array.from(this.categories.values());
+  }
+  async createCategory(insertCategory) {
+    const id = this.currentCategoryId++;
+    const category = { ...insertCategory, id };
+    this.categories.set(id, category);
+    return category;
+  }
+  async deleteCategory(id) {
+    this.categories.delete(id);
+  }
+  async getAppointments() {
+    return Array.from(this.appointments.values());
+  }
+  async getAppointmentsByDateRange(startDate, endDate) {
+    return Array.from(this.appointments.values()).filter((appointment) => {
+      const appointmentStart = new Date(appointment.startTime);
+      return appointmentStart >= startDate && appointmentStart <= endDate;
+    });
+  }
+  async createAppointment(insertAppointment) {
+    const id = this.currentAppointmentId++;
+    const appointment = {
+      ...insertAppointment,
+      id,
+      startTime: new Date(insertAppointment.startTime),
+      endTime: new Date(insertAppointment.endTime),
+      notificationSent: false,
+      description: insertAppointment.description || null,
+      email: insertAppointment.email || null,
+      categoryId: insertAppointment.categoryId || null
+    };
+    this.appointments.set(id, appointment);
+    return appointment;
+  }
+  async updateAppointment(id, updateData) {
+    const existing = this.appointments.get(id);
+    if (!existing) {
+      throw new Error("Appointment not found");
+    }
+    const updated = {
+      ...existing,
+      ...updateData,
+      startTime: updateData.startTime ? new Date(updateData.startTime) : existing.startTime,
+      endTime: updateData.endTime ? new Date(updateData.endTime) : existing.endTime
+    };
+    this.appointments.set(id, updated);
+    return updated;
+  }
+  async deleteAppointment(id) {
+    this.appointments.delete(id);
+  }
+  async markNotificationSent(id) {
+    const appointment = this.appointments.get(id);
+    if (appointment) {
+      appointment.notificationSent = true;
+      this.appointments.set(id, appointment);
+    }
+  }
+  async getAppointmentsForNotification() {
+    return Array.from(this.appointments.values()).filter(
+      (appointment) => !appointment.notificationSent && appointment.email
+    );
+  }
+};
+var storage = new MemStorage();
+
+// shared/schema.ts
+import { pgTable, text, serial, integer, boolean, timestamp } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod";
+var categories = pgTable("categories", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  color: text("color").notNull()
+});
+var appointments = pgTable("appointments", {
+  id: serial("id").primaryKey(),
+  title: text("title").notNull(),
+  description: text("description"),
+  startTime: timestamp("start_time").notNull(),
+  endTime: timestamp("end_time").notNull(),
+  categoryId: integer("category_id").references(() => categories.id),
+  email: text("email"),
+  notificationSent: boolean("notification_sent").default(false)
+});
+var insertCategorySchema = createInsertSchema(categories).omit({
+  id: true
+});
+var insertAppointmentSchema = createInsertSchema(appointments).omit({
+  id: true,
+  notificationSent: true
+}).extend({
+  startTime: z.string().datetime(),
+  endTime: z.string().datetime()
+});
+
+// server/routes.ts
+import { z as z2 } from "zod";
+
+// server/services/scheduler.ts
+import cron from "node-cron";
+
+// server/services/notification.ts
+import nodemailer from "nodemailer";
+var transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST || "smtp.gmail.com",
+  port: parseInt(process.env.SMTP_PORT || "587"),
+  secure: false,
+  // true for 465, false for other ports
+  auth: {
+    user: process.env.SMTP_USER || process.env.EMAIL_USER,
+    pass: process.env.SMTP_PASS || process.env.EMAIL_PASS
+  }
+});
+async function sendNotificationEmail(email, appointmentTitle, startTime) {
+  const formattedTime = startTime.toLocaleString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+  const mailOptions = {
+    from: process.env.SMTP_USER || process.env.EMAIL_USER || "noreply@weeklyagenda.com",
+    to: email,
+    subject: `Reminder: ${appointmentTitle} in 30 minutes`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="background-color: #1976D2; color: white; padding: 20px; border-radius: 8px 8px 0 0;">
+          <h1 style="margin: 0; font-size: 24px;">\u{1F4C5} Appointment Reminder</h1>
+        </div>
+        
+        <div style="background-color: #f8f9fa; padding: 20px; border-radius: 0 0 8px 8px; border: 1px solid #e9ecef;">
+          <h2 style="color: #1976D2; margin-top: 0;">${appointmentTitle}</h2>
+          <p style="font-size: 16px; color: #333;">
+            <strong>\u23F0 Time:</strong> ${formattedTime}
+          </p>
+          <p style="font-size: 14px; color: #666;">
+            This is a friendly reminder that your appointment is starting in 30 minutes. Please make sure you're prepared and ready to attend.
+          </p>
+          
+          <div style="margin-top: 20px; padding: 15px; background-color: #e3f2fd; border-radius: 4px; border-left: 4px solid #1976D2;">
+            <p style="margin: 0; font-size: 14px; color: #1976D2;">
+              <strong>\u{1F4A1} Tip:</strong> You can manage your appointments in the Weekly Agenda app.
+            </p>
+          </div>
+        </div>
+        
+        <div style="text-align: center; margin-top: 20px; color: #666; font-size: 12px;">
+          <p>This is an automated reminder from Weekly Agenda</p>
+        </div>
+      </div>
+    `
+  };
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`Notification email sent to ${email} for appointment: ${appointmentTitle}`);
+  } catch (error) {
+    console.error("Failed to send notification email:", error);
+    throw error;
+  }
+}
+
+// server/services/scheduler.ts
+async function checkConflicts(appointment, excludeId) {
+  if (!appointment.startTime || !appointment.endTime) {
+    return [];
+  }
+  const startTime = new Date(appointment.startTime);
+  const endTime = new Date(appointment.endTime);
+  const existingAppointments = await storage.getAppointments();
+  return existingAppointments.filter((existing) => {
+    if (excludeId && existing.id === excludeId) {
+      return false;
+    }
+    const existingStart = new Date(existing.startTime);
+    const existingEnd = new Date(existing.endTime);
+    return startTime < existingEnd && endTime > existingStart || existingStart < endTime && existingEnd > startTime;
+  });
+}
+function startNotificationScheduler() {
+  cron.schedule("* * * * *", async () => {
+    try {
+      const appointments2 = await storage.getAppointmentsForNotification();
+      const now = /* @__PURE__ */ new Date();
+      const thirtyMinutesFromNow = new Date(now.getTime() + 30 * 60 * 1e3);
+      for (const appointment of appointments2) {
+        const startTime = new Date(appointment.startTime);
+        if (startTime > now && startTime <= thirtyMinutesFromNow && appointment.email) {
+          try {
+            await sendNotificationEmail(appointment.email, appointment.title, startTime);
+            await storage.markNotificationSent(appointment.id);
+            console.log(`Notification sent for appointment: ${appointment.title}`);
+          } catch (error) {
+            console.error(`Failed to send notification for appointment ${appointment.id}:`, error);
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Error in notification scheduler:", error);
+    }
+  });
+  console.log("Notification scheduler started - checking every minute for upcoming appointments");
+}
+startNotificationScheduler();
+
+// server/routes.ts
+async function registerRoutes(app2) {
+  app2.get("/api/categories", async (req, res) => {
+    try {
+      const categories2 = await storage.getCategories();
+      res.json(categories2);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch categories" });
+    }
+  });
+  app2.post("/api/categories", async (req, res) => {
+    try {
+      const category = insertCategorySchema.parse(req.body);
+      const newCategory = await storage.createCategory(category);
+      res.status(201).json(newCategory);
+    } catch (error) {
+      if (error instanceof z2.ZodError) {
+        res.status(400).json({ error: "Invalid category data", details: error.errors });
+      } else {
+        res.status(500).json({ error: "Failed to create category" });
+      }
+    }
+  });
+  app2.delete("/api/categories/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteCategory(id);
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete category" });
+    }
+  });
+  app2.get("/api/appointments", async (req, res) => {
+    try {
+      const { startDate, endDate } = req.query;
+      let appointments2;
+      if (startDate && endDate) {
+        appointments2 = await storage.getAppointmentsByDateRange(
+          new Date(startDate),
+          new Date(endDate)
+        );
+      } else {
+        appointments2 = await storage.getAppointments();
+      }
+      res.json(appointments2);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch appointments" });
+    }
+  });
+  app2.post("/api/appointments", async (req, res) => {
+    try {
+      const appointment = insertAppointmentSchema.parse(req.body);
+      const conflicts = await checkConflicts(appointment);
+      if (conflicts.length > 0) {
+        return res.status(409).json({
+          error: "Appointment conflicts with existing events",
+          conflicts
+        });
+      }
+      const newAppointment = await storage.createAppointment(appointment);
+      res.status(201).json(newAppointment);
+    } catch (error) {
+      if (error instanceof z2.ZodError) {
+        res.status(400).json({ error: "Invalid appointment data", details: error.errors });
+      } else {
+        res.status(500).json({ error: "Failed to create appointment" });
+      }
+    }
+  });
+  app2.put("/api/appointments/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const appointment = insertAppointmentSchema.partial().parse(req.body);
+      if (appointment.startTime || appointment.endTime) {
+        const conflicts = await checkConflicts(appointment, id);
+        if (conflicts.length > 0) {
+          return res.status(409).json({
+            error: "Appointment conflicts with existing events",
+            conflicts
+          });
+        }
+      }
+      const updatedAppointment = await storage.updateAppointment(id, appointment);
+      res.json(updatedAppointment);
+    } catch (error) {
+      if (error instanceof z2.ZodError) {
+        res.status(400).json({ error: "Invalid appointment data", details: error.errors });
+      } else {
+        res.status(500).json({ error: "Failed to update appointment" });
+      }
+    }
+  });
+  app2.delete("/api/appointments/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteAppointment(id);
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete appointment" });
+    }
+  });
+  app2.post("/api/test-notification", async (req, res) => {
+    try {
+      const { email, title, startTime } = req.body;
+      await sendNotificationEmail(email, title, new Date(startTime));
+      res.json({ message: "Test notification sent" });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to send notification" });
+    }
+  });
+  const httpServer = createServer(app2);
+  return httpServer;
+}
+
+// server/vite.ts
+import express from "express";
+import fs from "fs";
+import path2 from "path";
+import { createServer as createViteServer, createLogger } from "vite";
+
+// vite.config.ts
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import path from "path";
+import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
+var vite_config_default = defineConfig({
+  plugins: [
+    react(),
+    runtimeErrorOverlay(),
+    ...process.env.NODE_ENV !== "production" && process.env.REPL_ID !== void 0 ? [
+      await import("@replit/vite-plugin-cartographer").then(
+        (m) => m.cartographer()
+      )
+    ] : []
+  ],
+  resolve: {
+    alias: {
+      "@": path.resolve(import.meta.dirname, "client", "src"),
+      "@shared": path.resolve(import.meta.dirname, "shared"),
+      "@assets": path.resolve(import.meta.dirname, "attached_assets")
+    }
+  },
+  root: path.resolve(import.meta.dirname, "client"),
+  build: {
+    outDir: path.resolve(import.meta.dirname, "dist/public"),
+    emptyOutDir: true
+  },
+  server: {
+    fs: {
+      strict: true,
+      deny: ["**/.*"]
+    }
+  }
+});
+
+// server/vite.ts
+import { nanoid } from "nanoid";
+var viteLogger = createLogger();
+function log(message, source = "express") {
+  const formattedTime = (/* @__PURE__ */ new Date()).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true
+  });
+  console.log(`${formattedTime} [${source}] ${message}`);
+}
+async function setupVite(app2, server) {
+  const serverOptions = {
+    middlewareMode: true,
+    hmr: { server },
+    allowedHosts: true
+  };
+  const vite = await createViteServer({
+    ...vite_config_default,
+    configFile: false,
+    customLogger: {
+      ...viteLogger,
+      error: (msg, options) => {
+        viteLogger.error(msg, options);
+        process.exit(1);
+      }
+    },
+    server: serverOptions,
+    appType: "custom"
+  });
+  app2.use(vite.middlewares);
+  app2.use("*", async (req, res, next) => {
+    const url = req.originalUrl;
+    try {
+      const clientTemplate = path2.resolve(
+        import.meta.dirname,
+        "..",
+        "client",
+        "index.html"
+      );
+      let template = await fs.promises.readFile(clientTemplate, "utf-8");
+      template = template.replace(
+        `src="/src/main.tsx"`,
+        `src="/src/main.tsx?v=${nanoid()}"`
+      );
+      const page = await vite.transformIndexHtml(url, template);
+      res.status(200).set({ "Content-Type": "text/html" }).end(page);
+    } catch (e) {
+      vite.ssrFixStacktrace(e);
+      next(e);
+    }
+  });
+}
+function serveStatic(app2) {
+  const distPath = path2.resolve(import.meta.dirname, "public");
+  if (!fs.existsSync(distPath)) {
+    throw new Error(
+      `Could not find the build directory: ${distPath}, make sure to build the client first`
+    );
+  }
+  app2.use(express.static(distPath));
+  app2.use("*", (_req, res) => {
+    res.sendFile(path2.resolve(distPath, "index.html"));
+  });
+}
+
+// server/index.ts
+var app = express2();
+app.use(express2.json());
+app.use(express2.urlencoded({ extended: false }));
+app.use((req, res, next) => {
+  const start = Date.now();
+  const path3 = req.path;
+  let capturedJsonResponse = void 0;
+  const originalResJson = res.json;
+  res.json = function(bodyJson, ...args) {
+    capturedJsonResponse = bodyJson;
+    return originalResJson.apply(res, [bodyJson, ...args]);
+  };
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    if (path3.startsWith("/api")) {
+      let logLine = `${req.method} ${path3} ${res.statusCode} in ${duration}ms`;
+      if (capturedJsonResponse) {
+        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+      }
+      if (logLine.length > 80) {
+        logLine = logLine.slice(0, 79) + "\u2026";
+      }
+      log(logLine);
+    }
+  });
+  next();
+});
+(async () => {
+  const server = await registerRoutes(app);
+  app.use((err, _req, res, _next) => {
+    const status = err.status || err.statusCode || 500;
+    const message = err.message || "Internal Server Error";
+    res.status(status).json({ message });
+    throw err;
+  });
+  if (app.get("env") === "development") {
+    await setupVite(app, server);
+  } else {
+    serveStatic(app);
+  }
+  const port = 8e3;
+  server.listen(
+    {
+      port,
+      host: "0.0.0.0",
+      reusePort: true
+    },
+    () => {
+      log(`serving on port ${port}`);
+    }
+  );
+})();
