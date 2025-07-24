@@ -1,6 +1,6 @@
 
-import { drizzle } from "drizzle-orm/neon-http";
-import { neon } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { Client } from "pg";
 import { categories, appointments, type Category, type Appointment, type InsertCategory, type InsertAppointment } from "@shared/schema";
 import { eq, and, gte, lte } from "drizzle-orm";
 import type { IStorage } from "./storage";
@@ -9,8 +9,13 @@ if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL environment variable is required. Please create a PostgreSQL database in Replit.");
 }
 
-const sql = neon(process.env.DATABASE_URL);
-const db = drizzle(sql);
+const client = new Client({
+  connectionString: process.env.DATABASE_URL,
+});
+
+// Initialize connection
+await client.connect();
+const db = drizzle(client);
 
 export class DatabaseStorage implements IStorage {
   async getCategories(): Promise<Category[]> {
