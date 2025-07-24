@@ -1,52 +1,16 @@
 
 import { drizzle } from "drizzle-orm/neon-http";
-import { drizzle as drizzleSqlite } from "drizzle-orm/better-sqlite3";
 import { neon } from "@neondatabase/serverless";
-import Database from "better-sqlite3";
 import { categories, appointments, type Category, type Appointment, type InsertCategory, type InsertAppointment } from "@shared/schema";
 import { eq, and, gte, lte } from "drizzle-orm";
 import type { IStorage } from "./storage";
 
-let db: any;
-
-if (process.env.NODE_ENV === 'production') {
-  if (!process.env.DATABASE_URL) {
-    throw new Error("DATABASE_URL environment variable is required in production");
-  }
-  const sql = neon(process.env.DATABASE_URL);
-  db = drizzle(sql);
-} else {
-  // Use SQLite for development
-  const sqlite = new Database("dev.db");
-  db = drizzleSqlite(sqlite);
-  
-  // Create tables if they don't exist
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS "categories" (
-      "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-      "name" TEXT NOT NULL,
-      "color" TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS "appointments" (
-      "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-      "title" TEXT NOT NULL,
-      "description" TEXT,
-      "start_time" INTEGER NOT NULL,
-      "end_time" INTEGER NOT NULL,
-      "category_id" INTEGER,
-      "email" TEXT,
-      "notification_sent" INTEGER DEFAULT 0,
-      FOREIGN KEY ("category_id") REFERENCES "categories"("id")
-    );
-
-    INSERT OR IGNORE INTO "categories" ("id", "name", "color") VALUES 
-      (1, 'Work', '#1976D2'),
-      (2, 'Personal', '#4CAF50'),
-      (3, 'Health', '#FF9800'),
-      (4, 'Social', '#9C27B0');
-  `);
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL environment variable is required. Please create a PostgreSQL database in Replit.");
 }
+
+const sql = neon(process.env.DATABASE_URL);
+const db = drizzle(sql);
 
 export class DatabaseStorage implements IStorage {
   async getCategories(): Promise<Category[]> {
